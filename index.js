@@ -30,14 +30,13 @@ function extractDimensionsSmart(lines) {
   const dims = [];
   const passungen = [];
   const gewinde = [];
-  const regexRaw = /([Ø⌀]?)\s?(\d{1,3}[,\.]\d{1,3})/g;
+  const regexRaw = /([Ø⌀]?)\s?(\d{1,3}([,\.]\d{1,3})?|\d{2,3})/g;
   const regexM = /M(\d{1,3})(x\d{1,2}\.\d)?/g;
   const regexR = /R(\d{1,3}[,\.]?\d{0,2})/g;
 
   for (const line of lines) {
     let match;
 
-    // Durchmesser & Maße
     while ((match = regexRaw.exec(line)) !== null) {
       let val = parseFloat(match[2].replace(",", "."));
       if (!isNaN(val) && val >= 2 && val <= 1000) {
@@ -45,7 +44,6 @@ function extractDimensionsSmart(lines) {
       }
     }
 
-    // M-Gewinde
     while ((match = regexM.exec(line)) !== null) {
       const d = parseFloat(match[1]);
       if (!isNaN(d) && d >= 2) {
@@ -54,7 +52,6 @@ function extractDimensionsSmart(lines) {
       }
     }
 
-    // Radius
     while ((match = regexR.exec(line)) !== null) {
       const r = parseFloat(match[1].replace(",", "."));
       if (!isNaN(r) && r > 0.5 && r < 1000) {
@@ -63,7 +60,6 @@ function extractDimensionsSmart(lines) {
     }
   }
 
-  // Priorisieren: größter Ø, größte Länge
   const dmax = Math.max(...dims.filter(d => d.isDiameter).map(d => d.value), 0);
   const lmax = Math.max(...dims.filter(d => !d.isDiameter).map(d => d.value), 0);
 
@@ -129,5 +125,5 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log("Backend 3.1.4 läuft auf Port", port);
+  console.log("Backend 3.1.5 läuft auf Port", port);
 });
