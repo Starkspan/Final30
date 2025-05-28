@@ -24,30 +24,35 @@ function extractData(ocrText) {
     surface: [],
   };
 
-  const dimensionRegex = /[Ø⌀]?(\d{1,3}[,\.]?\d{0,2})\s?(±|\+|−|–|\-|\+\/\-)?\s?\d{0,3}[,\.]?\d{0,2}?/g;
-  const materialRegex = /(1\.[0-9]{4}|S235|S355|C45|42CrMo4|16MnCr5|AlMg|EN AW|X\d+CrNi|ST\d+)/gi;
-  const drawingNumberRegex = /\b\d{2}\.\d{2}\.\d{2}-\d{4}\b/;
-  const surfaceRegex = /Ra\s?\d{1,2}[,\.]?\d{0,2}/gi;
+  const dimensionRegex = /[Ø⌀]?[\d]{1,3}[,\.]\d{1,2}(\s?[±\+−\–\-]\s?\d{1,2}[,\.]\d{1,2})?/g;
+  const materialRegex = /(1\.2210|1\.2344|1\.4301|1\.0038|S235|S355|C45|42CrMo4|16MnCr5|AlMg|EN AW|X\d+CrNi\d*)/gi;
+  const drawingNumberRegex = /[A-Z]?\d{6,9}|\d{2}\.\d{2}\.\d{2}-\d{4}/;
+  const surfaceRegex = /Ra\s?[\d]{1,2}[,\.]?[\d]{0,2}/gi;
+
+  const knownMaterials = new Set();
+  const knownSurfaces = new Set();
+  const knownDims = new Set();
 
   for (const line of lines) {
     const dims = line.match(dimensionRegex);
-    if (dims) results.dimensions.push(...dims);
+    if (dims) for (let d of dims) knownDims.add(d);
 
     const materials = line.match(materialRegex);
-    if (materials) results.materials.push(...materials);
+    if (materials) for (let m of materials) knownMaterials.add(m);
 
     const surfaces = line.match(surfaceRegex);
-    if (surfaces) results.surface.push(...surfaces);
+    if (surfaces) for (let s of surfaces) knownSurfaces.add(s);
 
     if (!results.drawingNumber) {
       const match = line.match(drawingNumberRegex);
-      if (match) results.drawingNumber = match[0];
+      if (match && match[0].length >= 6) results.drawingNumber = match[0];
     }
   }
 
-  if (!results.partName && results.drawingNumber) {
-    results.partName = results.drawingNumber;
-  }
+  results.partName = results.drawingNumber || null;
+  results.dimensions = Array.from(knownDims);
+  results.materials = Array.from(knownMaterials);
+  results.surface = Array.from(knownSurfaces);
 
   return results;
 }
@@ -73,5 +78,5 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`StarkSpan Backend Schritt 2 läuft auf Port ${port}`);
+  console.log(`StarkSpan Backend Schritt 2.1 läuft auf Port ${port}`);
 });
