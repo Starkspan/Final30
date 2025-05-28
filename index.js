@@ -22,93 +22,52 @@ const materialDensity = {
   "S235": 7.85,
   "S355": 7.85,
   "C45": 7.85,
-  "AlMg": 2.70
+  "AlMg": 2.70,
+  "1.0060": 7.85
 };
 
-function extractDimensionsWithGewinde(lines) {
+function extractDimensionsSmart(lines) {
   const dims = [];
   const passungen = [];
   const gewinde = [];
+  const regexRaw = /([Ø⌀]?)\s?(\d{1,3}[,\.]\d{1,3})/g;
+  const regexM = /M(\d{1,3})(x\d{1,2}\.\d)?/g;
+  const regexR = /R(\d{1,3}[,\.]?\d{0,2})/g;
 
   for (const line of lines) {
-    // Ø5 h6 (0.008)
-    const passungMatch = line.match(/(?:Ø|⌀)?(\d{1,3}[,\.]\d{1,2})\s*([a-zA-Z]\d{1,2})\s*\((\d{1,2}[,\.]?\d{0,3})\)/);
-    if (passungMatch) {
-      const d = parseFloat(passungMatch[1].replace(",", "."));
-      const passung = passungMatch[2];
-      const toleranz = parseFloat(passungMatch[3].replace(",", "."));
-      if (!isNaN(d) && d >= 2) {
-        dims.push({ value: d, isDiameter: true });
-        passungen.push({ d, passung, toleranz });
+    let match;
+
+    // Durchmesser & Maße
+    while ((match = regexRaw.exec(line)) !== null) {
+      let val = parseFloat(match[2].replace(",", "."));
+      if (!isNaN(val) && val >= 2 && val <= 1000) {
+        dims.push({ value: val, isDiameter: match[1].includes("Ø") || match[1].includes("⌀") });
       }
     }
 
-    // M-Gewinde (z. B. M64, M12x1.5)
-    const mMatch = line.match(/M(\d{1,3})(x\d{1,2}\.\d)?/);
-    if (mMatch) {
-      const d = parseFloat(mMatch[1]);
+    // M-Gewinde
+    while ((match = regexM.exec(line)) !== null) {
+      const d = parseFloat(match[1]);
       if (!isNaN(d) && d >= 2) {
         dims.push({ value: d, isDiameter: true });
         gewinde.push("M" + d);
       }
     }
 
-    // Radius (z. B. R3, R2.5)
-    const rMatch = line.match(/R(\d{1,3}[,\.]?\d{0,2})/);
-    if (rMatch) {
-      const r = parseFloat(rMatch[1].replace(",", "."));
-      if (!isNaN(r) && r > 0.5) {
-        dims.push({ value: r * 2, isDiameter: true });  // Radius zu Ø
-      }
-    }
-
-    // Ø und normale Maße
-    const dimRegex = /[Ø⌀]?(\d{1,3}[,\.]\d{1,2})/g;
-    const matches = [...line.matchAll(dimRegex)];
-    for (const match of matches) {
-      const value = parseFloat(match[1].replace(",", "."));
-      const isDiameter = match[0].includes("Ø") || match[0].includes("⌀");
-      if (!isNaN(value) && value >= 2) {
-        dims.push({ value, isDiameter });
+    // Radius
+    while ((match = regexR.exec(line)) !== null) {
+      const r = parseFloat(match[1].replace(",", "."));
+      if (!isNaN(r) && r > 0.5 && r < 1000) {
+        dims.push({ value: r * 2, isDiameter: true });
       }
     }
   }
 
-  return { dims, passungen, gewinde };
-}
+  // Priorisieren: größter Ø, größte Länge
+  const dmax = Math.max(...dims.filter(d => d.isDiameter).map(d => d.value), 0);
+  const lmax = Math.max(...dims.filter(d => !d.isDiameter).map(d => d.value), 0);
 
-function detectForm(dims) {
-  const ds = dims.filter(d => d.isDiameter).map(d => d.value);
-  const others = dims.filter(d => !d.isDiameter).map(d => d.value);
-  if (ds.length >= 1 && others.length >= 1) return "Zylinder";
-  if (ds.length >= 1 && others.length >= 2) return "Flansch";
-  if (others.length >= 3) return "Block";
-  return "Unbekannt";
-}
-
-function estimateVolumeAndWeight(form, dims, material) {
-  const safetyFactor = 1.05;
-  let volumeCm3 = 0;
-
-  const diameters = dims.filter(d => d.isDiameter).map(d => d.value * safetyFactor);
-  const others = dims.filter(d => !d.isDiameter).map(d => d.value * safetyFactor);
-
-  if (form === "Zylinder" && diameters.length >= 1 && others.length >= 1) {
-    const d = diameters[0];
-    const h = others[0];
-    volumeCm3 = Math.PI * Math.pow(d / 2, 2) * h / 1000;
-  } else if (form === "Block" && others.length >= 3) {
-    const [x, y, z] = others;
-    volumeCm3 = (x * y * z) / 1000;
-  } else if (form === "Flansch" && diameters.length >= 1 && others.length >= 1) {
-    const d = diameters[0];
-    const t = others[0];
-    volumeCm3 = Math.PI * Math.pow(d / 2, 2) * t / 1000;
-  }
-
-  const density = materialDensity[material] || 7.85;
-  const weightKg = (volumeCm3 * density) / 1000;
-  return { volumeCm3, weightKg };
+  return { dims, dmax, lmax, gewinde };
 }
 
 function extractMaterial(lines) {
@@ -138,11 +97,18 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
     fs.unlinkSync(imagePath);
 
     const lines = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
-    const { dims, passungen, gewinde } = extractDimensionsWithGewinde(lines);
-    const form = detectForm(dims);
     const material = extractMaterial(lines);
     const drawingNumber = extractDrawingNumber(lines);
-    const { volumeCm3, weightKg } = estimateVolumeAndWeight(form, dims, material);
+
+    const { dims, dmax, lmax, gewinde } = extractDimensionsSmart(lines);
+    const form = dmax > 0 && lmax > 0 ? "Zylinder" : "Unbekannt";
+
+    const volume = dmax > 0 && lmax > 0
+      ? Math.PI * Math.pow(dmax / 2, 2) * lmax / 1000
+      : 0;
+
+    const density = materialDensity[material] || 7.85;
+    const weight = (volume * density) / 1000;
 
     res.json({
       text: ocrText,
@@ -151,9 +117,8 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
         material,
         dimensions: dims.map(d => (d.isDiameter ? "Ø" : "") + d.value.toFixed(2)),
         form,
-        volumeCm3: volumeCm3.toFixed(2),
-        weightKg: weightKg.toFixed(3),
-        passungen,
+        volumeCm3: volume.toFixed(2),
+        weightKg: weight.toFixed(3),
         gewinde
       }
     });
@@ -164,5 +129,5 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`StarkSpan Schritt 3.1.3 Backend läuft auf Port ${port}`);
+  console.log("Backend 3.1.4 läuft auf Port", port);
 });
