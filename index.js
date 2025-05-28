@@ -25,9 +25,10 @@ const materialDensity = {
   "AlMg": 2.70
 };
 
-function extractDimensionsWithPassung(lines) {
+function extractDimensionsWithGewinde(lines) {
   const dims = [];
   const passungen = [];
+  const gewinde = [];
 
   for (const line of lines) {
     // Ø5 h6 (0.008)
@@ -42,7 +43,26 @@ function extractDimensionsWithPassung(lines) {
       }
     }
 
-    // Standardmaß (Ø optional)
+    // M-Gewinde (z. B. M64, M12x1.5)
+    const mMatch = line.match(/M(\d{1,3})(x\d{1,2}\.\d)?/);
+    if (mMatch) {
+      const d = parseFloat(mMatch[1]);
+      if (!isNaN(d) && d >= 2) {
+        dims.push({ value: d, isDiameter: true });
+        gewinde.push("M" + d);
+      }
+    }
+
+    // Radius (z. B. R3, R2.5)
+    const rMatch = line.match(/R(\d{1,3}[,\.]?\d{0,2})/);
+    if (rMatch) {
+      const r = parseFloat(rMatch[1].replace(",", "."));
+      if (!isNaN(r) && r > 0.5) {
+        dims.push({ value: r * 2, isDiameter: true });  // Radius zu Ø
+      }
+    }
+
+    // Ø und normale Maße
     const dimRegex = /[Ø⌀]?(\d{1,3}[,\.]\d{1,2})/g;
     const matches = [...line.matchAll(dimRegex)];
     for (const match of matches) {
@@ -54,14 +74,15 @@ function extractDimensionsWithPassung(lines) {
     }
   }
 
-  return { dims, passungen };
+  return { dims, passungen, gewinde };
 }
 
 function detectForm(dims) {
-  const hasDiameter = dims.some(d => d.isDiameter);
-  if (hasDiameter && dims.length >= 2) return "Zylinder";
-  if (!hasDiameter && dims.length === 3) return "Block";
-  if (hasDiameter && dims.length >= 3) return "Flansch";
+  const ds = dims.filter(d => d.isDiameter).map(d => d.value);
+  const others = dims.filter(d => !d.isDiameter).map(d => d.value);
+  if (ds.length >= 1 && others.length >= 1) return "Zylinder";
+  if (ds.length >= 1 && others.length >= 2) return "Flansch";
+  if (others.length >= 3) return "Block";
   return "Unbekannt";
 }
 
@@ -91,7 +112,7 @@ function estimateVolumeAndWeight(form, dims, material) {
 }
 
 function extractMaterial(lines) {
-  const materialRegex = /(1\.2210|1\.2344|1\.4301|1\.0038|S235|S355|C45|42CrMo4|AlMg)/i;
+  const materialRegex = /(1\.2210|1\.2344|1\.4301|1\.0038|S235|S355|C45|42CrMo4|AlMg|1\.0060)/i;
   for (const line of lines) {
     const match = line.match(materialRegex);
     if (match) return match[0];
@@ -100,7 +121,7 @@ function extractMaterial(lines) {
 }
 
 function extractDrawingNumber(lines) {
-  const drawingRegex = /[A-Z]?\d{6,9}|\d{2}\.\d{2}\.\d{2}-\d{4}/;
+  const drawingRegex = /\d{2}\.\d{2}\.\d{2}-\d{4}|\d{6,9}/;
   for (const line of lines) {
     const match = line.match(drawingRegex);
     if (match) return match[0];
@@ -117,7 +138,7 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
     fs.unlinkSync(imagePath);
 
     const lines = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
-    const { dims, passungen } = extractDimensionsWithPassung(lines);
+    const { dims, passungen, gewinde } = extractDimensionsWithGewinde(lines);
     const form = detectForm(dims);
     const material = extractMaterial(lines);
     const drawingNumber = extractDrawingNumber(lines);
@@ -132,7 +153,8 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
         form,
         volumeCm3: volumeCm3.toFixed(2),
         weightKg: weightKg.toFixed(3),
-        passungen
+        passungen,
+        gewinde
       }
     });
   } catch (err) {
@@ -142,5 +164,5 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`StarkSpan Schritt 3.1.2 Backend läuft auf Port ${port}`);
+  console.log(`StarkSpan Schritt 3.1.3 Backend läuft auf Port ${port}`);
 });
