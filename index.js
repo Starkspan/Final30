@@ -14,7 +14,6 @@ app.use(express.json());
 
 const client = new vision.ImageAnnotatorClient();
 
-// Dichte in g/cm³
 const materialDensity = {
   "1.2210": 7.85,
   "1.4301": 7.90,
@@ -26,45 +25,64 @@ const materialDensity = {
   "AlMg": 2.70
 };
 
-function extractDimensions(lines) {
-  const dimRegex = /[Ø⌀]?(\d{1,3}[,\.]\d{1,2})/g;
-  const found = new Set();
+function extractDimensionsWithPassung(lines) {
+  const dims = [];
+  const passungen = [];
 
   for (const line of lines) {
-    const matches = line.match(dimRegex);
-    if (matches) {
-      for (let m of matches) {
-        m = m.replace(",", ".").replace(/[Ø⌀]/g, "");
-        if (!isNaN(parseFloat(m))) found.add(parseFloat(m));
+    // Ø5 h6 (0.008)
+    const passungMatch = line.match(/(?:Ø|⌀)?(\d{1,3}[,\.]\d{1,2})\s*([a-zA-Z]\d{1,2})\s*\((\d{1,2}[,\.]?\d{0,3})\)/);
+    if (passungMatch) {
+      const d = parseFloat(passungMatch[1].replace(",", "."));
+      const passung = passungMatch[2];
+      const toleranz = parseFloat(passungMatch[3].replace(",", "."));
+      if (!isNaN(d) && d >= 2) {
+        dims.push({ value: d, isDiameter: true });
+        passungen.push({ d, passung, toleranz });
+      }
+    }
+
+    // Standardmaß (Ø optional)
+    const dimRegex = /[Ø⌀]?(\d{1,3}[,\.]\d{1,2})/g;
+    const matches = [...line.matchAll(dimRegex)];
+    for (const match of matches) {
+      const value = parseFloat(match[1].replace(",", "."));
+      const isDiameter = match[0].includes("Ø") || match[0].includes("⌀");
+      if (!isNaN(value) && value >= 2) {
+        dims.push({ value, isDiameter });
       }
     }
   }
 
-  return Array.from(found).sort((a, b) => b - a); // descending
+  return { dims, passungen };
 }
 
-function detectForm(dimList) {
-  if (!dimList || dimList.length < 2) return "Unbekannt";
-  const hasDiameter = dimList.some(d => d < 100 && d > 3); // simple Ø assumption
-  if (hasDiameter && dimList.length === 2) return "Zylinder";
-  if (dimList.length === 3 && !hasDiameter) return "Block";
-  if (dimList.length >= 2 && hasDiameter) return "Flansch";
+function detectForm(dims) {
+  const hasDiameter = dims.some(d => d.isDiameter);
+  if (hasDiameter && dims.length >= 2) return "Zylinder";
+  if (!hasDiameter && dims.length === 3) return "Block";
+  if (hasDiameter && dims.length >= 3) return "Flansch";
   return "Unbekannt";
 }
 
 function estimateVolumeAndWeight(form, dims, material) {
-  let volumeCm3 = 0;
   const safetyFactor = 1.05;
+  let volumeCm3 = 0;
 
-  if (form === "Zylinder" && dims.length >= 2) {
-    const d = dims[0] * safetyFactor; // Ø
-    const h = dims[1] * safetyFactor; // Länge
-    volumeCm3 = Math.PI * Math.pow(d / 2, 2) * h / 1000; // mm³ → cm³
-  } else if (form === "Block" && dims.length >= 3) {
-    const x = dims[0] * safetyFactor;
-    const y = dims[1] * safetyFactor;
-    const z = dims[2] * safetyFactor;
+  const diameters = dims.filter(d => d.isDiameter).map(d => d.value * safetyFactor);
+  const others = dims.filter(d => !d.isDiameter).map(d => d.value * safetyFactor);
+
+  if (form === "Zylinder" && diameters.length >= 1 && others.length >= 1) {
+    const d = diameters[0];
+    const h = others[0];
+    volumeCm3 = Math.PI * Math.pow(d / 2, 2) * h / 1000;
+  } else if (form === "Block" && others.length >= 3) {
+    const [x, y, z] = others;
     volumeCm3 = (x * y * z) / 1000;
+  } else if (form === "Flansch" && diameters.length >= 1 && others.length >= 1) {
+    const d = diameters[0];
+    const t = others[0];
+    volumeCm3 = Math.PI * Math.pow(d / 2, 2) * t / 1000;
   }
 
   const density = materialDensity[material] || 7.85;
@@ -99,7 +117,7 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
     fs.unlinkSync(imagePath);
 
     const lines = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
-    const dims = extractDimensions(lines);
+    const { dims, passungen } = extractDimensionsWithPassung(lines);
     const form = detectForm(dims);
     const material = extractMaterial(lines);
     const drawingNumber = extractDrawingNumber(lines);
@@ -110,10 +128,11 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
       extracted: {
         drawingNumber,
         material,
-        dimensions: dims,
+        dimensions: dims.map(d => (d.isDiameter ? "Ø" : "") + d.value.toFixed(2)),
         form,
         volumeCm3: volumeCm3.toFixed(2),
-        weightKg: weightKg.toFixed(3)
+        weightKg: weightKg.toFixed(3),
+        passungen
       }
     });
   } catch (err) {
@@ -123,5 +142,5 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`StarkSpan Schritt 3.1 Backend läuft auf Port ${port}`);
+  console.log(`StarkSpan Schritt 3.1.2 Backend läuft auf Port ${port}`);
 });
