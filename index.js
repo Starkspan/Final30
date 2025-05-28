@@ -26,44 +26,33 @@ const materialDensity = {
   "1.0060": 7.85
 };
 
+const materialPrice = {
+  "1.2210": 1.50,
+  "1.4301": 3.50,
+  "1.0038": 1.20,
+  "42CrMo4": 2.20,
+  "S235": 1.10,
+  "S355": 1.30,
+  "C45": 1.40,
+  "AlMg": 6.50,
+  "1.0060": 1.30
+};
+
 function extractDimensionsSmart(lines) {
   const dims = [];
-  const passungen = [];
-  const gewinde = [];
   const regexRaw = /([Ø⌀]?)\s*(\d{1,3}([,\.]\d{1,3})?|\d{1,3})(?=\D|$)/g;
-  const regexM = /M(\d{1,3})(x\d{1,2}\.\d)?/g;
-  const regexR = /R(\d{1,3}[,\.]?\d{0,2})/g;
-
   for (const line of lines) {
     let match;
-
     while ((match = regexRaw.exec(line)) !== null) {
       let val = parseFloat(match[2].replace(",", "."));
-      if (!isNaN(val) && val >= 2 && val <= 1000) {
+      if (!isNaN(val) && val >= 2 && val <= 2000) {
         dims.push({ value: val, isDiameter: match[1].includes("Ø") || match[1].includes("⌀") });
       }
     }
-
-    while ((match = regexM.exec(line)) !== null) {
-      const d = parseFloat(match[1]);
-      if (!isNaN(d) && d >= 2) {
-        dims.push({ value: d, isDiameter: true });
-        gewinde.push("M" + d);
-      }
-    }
-
-    while ((match = regexR.exec(line)) !== null) {
-      const r = parseFloat(match[1].replace(",", "."));
-      if (!isNaN(r) && r > 0.5 && r < 1000) {
-        dims.push({ value: r * 2, isDiameter: true });
-      }
-    }
   }
-
   const dmax = Math.max(...dims.filter(d => d.isDiameter).map(d => d.value), 0);
   const lmax = Math.max(...dims.filter(d => !d.isDiameter).map(d => d.value), 0);
-
-  return { dims, dmax, lmax, gewinde };
+  return { dims, dmax, lmax };
 }
 
 function extractMaterial(lines) {
@@ -84,6 +73,25 @@ function extractDrawingNumber(lines) {
   return null;
 }
 
+function calculatePrice(volume, weight, material) {
+  const material€/kg = materialPrice[material] || 1.50;
+  const materialCost = weight * material€/kg;
+  const machineTimeMin = weight * 0.3;
+  const machineRate = 35 / 60;
+  const machiningCost = machineTimeMin * machineRate;
+  const setupCost = 60;
+  const programmingCost = 30;
+  const total = setupCost + programmingCost + materialCost + machiningCost;
+  const finalPrice = total * 1.15;
+  return {
+    materialCost: materialCost.toFixed(2),
+    machiningCost: machiningCost.toFixed(2),
+    setupCost,
+    programmingCost,
+    finalPrice: finalPrice.toFixed(2)
+  };
+}
+
 app.post('/analyze', upload.single('image'), async (req, res) => {
   try {
     const imagePath = req.file.path;
@@ -95,8 +103,7 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
     const lines = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
     const material = extractMaterial(lines);
     const drawingNumber = extractDrawingNumber(lines);
-
-    const { dims, dmax, lmax, gewinde } = extractDimensionsSmart(lines);
+    const { dims, dmax, lmax } = extractDimensionsSmart(lines);
     const form = dmax > 0 && lmax > 0 ? "Zylinder" : "Unbekannt";
 
     const volume = dmax > 0 && lmax > 0
@@ -105,6 +112,7 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
 
     const density = materialDensity[material] || 7.85;
     const weight = (volume * density) / 1000;
+    const price = calculatePrice(volume, weight, material);
 
     res.json({
       text: ocrText,
@@ -115,15 +123,15 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
         form,
         volumeCm3: volume.toFixed(2),
         weightKg: weight.toFixed(3),
-        gewinde
+        price
       }
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Analyse fehlgeschlagen' });
+    res.status(500).json({ error: 'Analyse + Preisberechnung fehlgeschlagen' });
   }
 });
 
 app.listen(port, () => {
-  console.log("Backend 3.1.6 läuft auf Port", port);
+  console.log("Backend 3.2 läuft auf Port", port);
 });
