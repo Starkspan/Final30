@@ -30,7 +30,7 @@ function extractDimensionsSmart(lines) {
   const dims = [];
   const passungen = [];
   const gewinde = [];
-  const regexRaw = /([Ø⌀]?)\s?(\d{1,3}([,\.]\d{1,3})?|\d{2,3})/g;
+  const regexRaw = /([Ø⌀]?)\s*(\d{1,3}([,\.]\d{1,3})?|\d{1,3})(?=\D|$)/g;
   const regexM = /M(\d{1,3})(x\d{1,2}\.\d)?/g;
   const regexR = /R(\d{1,3}[,\.]?\d{0,2})/g;
 
@@ -125,5 +125,5 @@ app.post('/analyze', upload.single('image'), async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log("Backend 3.1.5 läuft auf Port", port);
+  console.log("Backend 3.1.6 läuft auf Port", port);
 });
