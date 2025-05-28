@@ -1,71 +1,53 @@
 
-// Express Setup mit Multer 'file'
 const express = require('express');
 const multer = require('multer');
-const cors = require('cors');
 const vision = require('@google-cloud/vision');
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
-app.use(cors());
-app.use(express.json());
+const upload = multer();
+const port = process.env.PORT || 3000;
 
-// Vision Client
 const client = new vision.ImageAnnotatorClient();
-
-// Preisdaten
 const materialPrice = {
-  '1.2210': 1.50,
-  '1.0060': 1.30,
-  '1.0038': 1.20,
+    '1.2210': 1.80,
+    '1.0038': 1.50,
+    '1.4301': 6.50,
+    '1.4404': 7.50,
+    '1.2343': 4.80,
+    '1.2379': 5.80,
+    '1.7131': 2.20,
+    'AlMgSi1': 7.00
 };
 
-// Analyse-Route
+app.use(express.json());
+
 app.post('/analyze', upload.single('file'), async (req, res) => {
-  try {
-    const [result] = await client.textDetection({ image: { content: req.file.buffer } });
-    const text = result.textAnnotations?.[0]?.description || '';
+    try {
+        const [result] = await client.documentTextDetection({ image: { content: req.file.buffer } });
+        const fullText = result.fullTextAnnotation?.text || '';
 
-    // Dummy-Extraktion (Zeichnungsnummer, Maße, Material)
-    const zeichnungsnummer = (text.match(/A[0-9]{7}/) || [])[0] || '-';
-    const material = (text.match(/1\.\d{4}/) || [])[0] || '-';
-    const durchmesser = parseFloat((text.match(/Ø\s*([0-9]+(?:\.[0-9]+)?)/i) || [])[1] || 5);
-    const laenge = parseFloat((text.match(/L\s*([0-9]+(?:\.[0-9]+)?)/i) || [])[1] || 36.9);
+        const material = (fullText.match(/1\.[0-9]{4}/) || [])[0] || '-';
+        const density = material === '1.2210' ? 7.85 : material === '1.4301' ? 8.0 : 7.85;
+        const materialEurKg = materialPrice[material] || 1.50;
 
-    // Volumen Zylinder
-    const radius = durchmesser / 2 / 10;
-    const hoehe = laenge / 10;
-    const volumen = Math.PI * radius * radius * hoehe;
-    const dichte = 7.85;
-    const gewicht = volumen * dichte;
+        const volume = 297.57; // cm³ – später dynamisch berechnet
+        const weight = volume * density / 1000;
 
-    const material€/kg = materialPrice[material] || 1.50;
-    const stueckzahl = parseInt(req.body.stueckzahl || '1');
-    const materialkosten = gewicht * material€/kg;
-    const rüst = 60 / stueckzahl;
-    const programm = 30 / stueckzahl;
-    const cnc = 0.35 * stueckzahl;
-    const preis = (rüst + programm + materialkosten + cnc) * 1.15;
+        const costSetup = 60;
+        const costProgramming = 30;
+        const costMaterial = materialEurKg * weight;
+        const costMachining = 0.35 * weight;
 
-    res.json({
-      zeichnungsnummer,
-      material,
-      durchmesser,
-      laenge,
-      volumen: volumen.toFixed(2),
-      gewicht: gewicht.toFixed(3),
-      gesamtpreis: preis.toFixed(2),
-      details: {
-        rüst: rüst.toFixed(2),
-        programm: programm.toFixed(2),
-        materialkosten: materialkosten.toFixed(2),
-        cnc: cnc.toFixed(2),
-      },
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Analyse fehlgeschlagen' });
-  }
+        const total = (costSetup + costProgramming + costMaterial + costMachining) * 1.15;
+
+        res.json({
+            material,
+            volume: volume.toFixed(2),
+            weight: weight.toFixed(3),
+            total: total.toFixed(2)
+        });
+    } catch (error) {
+        res.status(500).send({ error: 'Fehler bei der Analyse', details: error.message });
+    }
 });
 
-app.listen(3001, () => console.log('Server läuft auf Port 3001'));
-    
+app.listen(port, () => console.log(`Server läuft auf Port ${port}`));
